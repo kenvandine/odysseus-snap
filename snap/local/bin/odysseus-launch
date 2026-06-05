@@ -1,0 +1,65 @@
+#!/bin/bash
+set -e
+
+APP_DIR="$SNAP_USER_COMMON/app"
+VER_FILE="$SNAP_USER_COMMON/.snap-version"
+
+# On first install or snap refresh: copy the app source to a writable location.
+# The app computes paths relative to __file__ (e.g. data/, services/cache/),
+# which would point into the read-only snap squashfs if we ran from $SNAP.
+# Running from a writable copy lets every Path(__file__) dereference land in
+# SNAP_USER_COMMON, where the app can create and write subdirectories freely.
+current_ver="$(cat "$VER_FILE" 2>/dev/null || printf '')"
+if [ "$current_ver" != "$SNAP_VERSION" ]; then
+  printf 'Odysseus: updating app code to version %s\n' "$SNAP_VERSION" >&2
+  mkdir -p "$APP_DIR"
+
+  # Remove stale Python source dirs only; preserve runtime-written directories:
+  #   data/            — user conversations, sessions, uploads, settings
+  #   logs/            — server logs
+  #   services/cache/  — search and content caches
+  for item in app.py core src routes static mcp_servers companion config scripts; do
+    rm -rf "${APP_DIR:?}/$item"
+  done
+  # In services/, remove code subdirs but leave cache/ intact if it exists.
+  if [ -d "$APP_DIR/services" ]; then
+    find "$APP_DIR/services" -maxdepth 1 -mindepth 1 \
+      ! -name 'cache' -exec rm -rf {} +
+  fi
+
+  # Copy the fresh snapshot from the read-only snap.
+  # $SNAP/opt/odysseus does not contain data/, logs/, or services/cache/
+  # so existing user data is never overwritten.
+  cp -r "$SNAP/opt/odysseus/"* "$APP_DIR/"
+
+  printf '%s' "$SNAP_VERSION" > "$VER_FILE"
+fi
+
+# Ensure all directories the app expects to exist at startup are present.
+mkdir -p \
+  "$APP_DIR/data/uploads" \
+  "$APP_DIR/data/personal_docs/runbook" \
+  "$APP_DIR/logs" \
+  "$APP_DIR/services/cache/search" \
+  "$APP_DIR/services/cache/content"
+
+# Load user configuration from an optional .env file.
+# python-dotenv will also try to load .env from the cwd (APP_DIR), but
+# pointing users to SNAP_USER_COMMON keeps it out of the code tree.
+if [ -f "$SNAP_USER_COMMON/.env" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$SNAP_USER_COMMON/.env"
+  set +a
+fi
+
+# Expose snap-provided Node.js for the optional Browser MCP server (npx).
+export PATH="$SNAP/usr/bin:$SNAP/bin:$PATH"
+
+# Run the server from the writable app directory so all relative imports
+# (app.py, core/, src/, routes/, etc.) resolve without PYTHONPATH tricks.
+cd "$APP_DIR"
+exec "$SNAP/bin/uvicorn" app:app \
+  --host "${ODYSSEUS_HOST:-127.0.0.1}" \
+  --port "${ODYSSEUS_PORT:-7000}" \
+  "$@"

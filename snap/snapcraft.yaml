@@ -1,0 +1,107 @@
+name: odysseus
+base: core24
+adopt-info: odysseus
+summary: Self-hosted AI workspace
+description: |
+  Odysseus is a privacy-focused, self-hosted AI workspace that runs entirely on
+  your own hardware. It provides a full-featured browser UI for chat, document
+  analysis, deep web research, calendar sync, image generation, speech-to-text,
+  email, and more — connecting to Ollama, LM Studio, OpenAI, Anthropic, and any
+  OpenAI-compatible endpoint.
+
+  Nothing leaves your machine beyond the LLM API calls you explicitly configure.
+  Your conversations, documents, uploaded files, and personal settings are stored
+  in ~/snap/odysseus/common/app/data and persist across snap updates.
+
+  QUICK START
+
+  After installation, run:
+
+    odysseus
+
+  Then open http://localhost:7000 in your browser to reach the UI. The default
+  port can be changed by setting ODYSSEUS_PORT in the environment or in your
+  .env file.
+
+  CONFIGURATION
+
+  Place a .env file at ~/snap/odysseus/common/.env to set API keys, LLM hosts,
+  and other options before starting the server. All variables from the upstream
+  .env.example are supported; for example:
+
+    OPENAI_API_KEY=sk-...
+    LLM_HOST=localhost
+    ODYSSEUS_PORT=7000
+    ODYSSEUS_HOST=127.0.0.1
+
+  AUTH
+
+  Authentication can be enabled by setting AUTH_ENABLED=true in your .env file.
+
+title: Odysseus
+source-code: https://github.com/kenvandine/odysseus-snap
+issues: https://github.com/kenvandine/odysseus-snap/issues
+contact: https://github.com/kenvandine/odysseus-snap/issues
+
+grade: stable
+confinement: classic
+
+apps:
+  odysseus:
+    command: bin/odysseus-launch
+
+parts:
+  launcher:
+    plugin: dump
+    source: snap/local
+    organize:
+      bin/odysseus-launch: bin/odysseus-launch
+
+  odysseus:
+    plugin: python
+    source: https://github.com/pewdiepie-archdaemon/odysseus.git
+    source-branch: dev
+    python-requirements:
+      - requirements.txt
+    build-packages:
+      - build-essential
+      - cmake
+      - git
+      - patchelf
+      - libssl-dev
+      - libffi-dev
+      - python3-dev
+    stage-packages:
+      - nodejs
+      - npm
+      - git
+      - curl
+      - tmux
+      - openssh-client
+      - libgomp1
+    override-build: |
+      craftctl default
+
+      # Patch the Python interpreter for classic confinement so it resolves
+      # shared libraries via the snap base (core24) rather than the host.
+      # Mirrors the patchelf step in the openclaw snap for node.
+      _py=$(find "$CRAFT_PART_INSTALL/bin" -name "python3*" -not -type l | head -1)
+      [ -n "$_py" ] && patchelf \
+        --set-interpreter /snap/core24/current/lib64/ld-linux-x86-64.so.2 \
+        --set-rpath /snap/core24/current/lib/x86_64-linux-gnu \
+        "$_py"
+
+      # Bundle the app source so the launch wrapper can copy it to a writable
+      # location on first run. data/, logs/ and services/cache/ are intentionally
+      # excluded — they are created at runtime in SNAP_USER_COMMON/app.
+      mkdir -p "$CRAFT_PART_INSTALL/opt/odysseus"
+      for item in app.py core src routes static mcp_servers companion services config scripts; do
+        [ -e "$item" ] && cp -r "$item" "$CRAFT_PART_INSTALL/opt/odysseus/"
+      done
+
+      # Derive the snap version from the app source.
+      craftctl set version="$(grep -oP '(?<=APP_VERSION = \")[^\"]+' core/constants.py)"
+    prime:
+      - -usr/share/doc
+      - -usr/share/man
+      - -usr/share/lintian
