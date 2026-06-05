@@ -58,19 +58,21 @@ parts:
       bin/odysseus-launch: bin/odysseus-launch
 
   odysseus:
-    plugin: python
+    # Use nil plugin to bypass the python plugin's post-build Python-payload
+    # check, which fails for core24 because python3.12 is filtered from
+    # stage-packages as a base-manifest package.
+    plugin: nil
     source: https://github.com/pewdiepie-archdaemon/odysseus.git
     source-branch: dev
-    python-requirements:
-      - requirements.txt
     build-packages:
+      - python3-venv
+      - python3-dev
       - build-essential
       - cmake
       - git
       - patchelf
       - libssl-dev
       - libffi-dev
-      - python3-dev
     stage-packages:
       - nodejs
       - npm
@@ -80,26 +82,53 @@ parts:
       - openssh-client
       - libgomp1
     override-build: |
-      craftctl default
+      # setup.py is an application first-run script, not a Python packaging
+      # file. Rename it so pip never treats the source tree as an installable
+      # package (which would trigger the app-level setup code and abort the
+      # build with missing-deps errors).
+      mv setup.py _setup_app.py
 
-      # Patch the Python interpreter for classic confinement so it resolves
-      # shared libraries via the snap base (core24) rather than the host.
-      # Mirrors the patchelf step in the openclaw snap for node.
-      _py=$(find "$CRAFT_PART_INSTALL/bin" -name "python3*" -not -type l | head -1)
-      [ -n "$_py" ] && patchelf \
+      # Create a venv with --copies so the Python binary is a real ELF file
+      # that patchelf can modify (symlinks cannot be patched in-place).
+      python3 -m venv --copies "$CRAFT_PART_INSTALL"
+      export PATH="$CRAFT_PART_INSTALL/bin:$PATH"
+      pip install --upgrade --no-cache-dir pip setuptools wheel
+
+      # Install all runtime dependencies. --no-build-isolation lets packages
+      # see each other during their own build steps, preventing the
+      # chromadb-client/httpx chicken-and-egg metadata failure.
+      pip install --no-cache-dir --no-build-isolation -r requirements.txt
+
+      mv _setup_app.py setup.py
+
+      # Rewrite the venv shebangs from the ephemeral build path to the snap's
+      # runtime path so scripts like uvicorn use the snap's own Python and
+      # site-packages rather than whatever python3 is on the host.
+      find "$CRAFT_PART_INSTALL/bin" -maxdepth 1 -type f | while read -r f; do
+        case "$(head -c 60 "$f" 2>/dev/null)" in
+          "#!${CRAFT_PART_INSTALL}/bin/python"*)
+            sed -i "1s|${CRAFT_PART_INSTALL}|/snap/odysseus/current|" "$f"
+            ;;
+        esac
+      done
+
+      # Patch the Python interpreter for classic confinement so it uses
+      # core24's dynamic linker. libpython3.12 and the stdlib are supplied
+      # by the host at /usr/lib (Ubuntu 24.04 ships Python 3.12).
+      patchelf \
         --set-interpreter /snap/core24/current/lib64/ld-linux-x86-64.so.2 \
         --set-rpath /snap/core24/current/lib/x86_64-linux-gnu \
-        "$_py"
+        "$CRAFT_PART_INSTALL/bin/python3.12"
+      chmod 755 "$CRAFT_PART_INSTALL/bin/python3.12"
 
       # Bundle the app source so the launch wrapper can copy it to a writable
-      # location on first run. data/, logs/ and services/cache/ are intentionally
-      # excluded — they are created at runtime in SNAP_USER_COMMON/app.
+      # location on first run. data/, logs/ and services/cache/ are created at
+      # runtime in SNAP_USER_COMMON/app and are intentionally excluded here.
       mkdir -p "$CRAFT_PART_INSTALL/opt/odysseus"
-      for item in app.py core src routes static mcp_servers companion services config scripts; do
+      for item in app.py setup.py core src routes static mcp_servers companion services config scripts; do
         [ -e "$item" ] && cp -r "$item" "$CRAFT_PART_INSTALL/opt/odysseus/"
       done
 
-      # Derive the snap version from the app source.
       craftctl set version="$(grep -oP '(?<=APP_VERSION = \")[^\"]+' core/constants.py)"
     prime:
       - -usr/share/doc
