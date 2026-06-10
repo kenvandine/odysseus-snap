@@ -70,7 +70,6 @@ parts:
       - build-essential
       - cmake
       - git
-      - patchelf
       - libssl-dev
       - libffi-dev
     stage-packages:
@@ -88,8 +87,14 @@ parts:
       # build with missing-deps errors).
       mv setup.py _setup_app.py
 
-      # Create a venv with --copies so the Python binary is a real ELF file
-      # that patchelf can modify (symlinks cannot be patched in-place).
+      # Start from a clean install dir so re-runs (incremental builds) don't
+      # try to recreate a venv over a previous one whose pyvenv.cfg points at
+      # the runtime /snap path (absent inside the build instance).
+      rm -rf "$CRAFT_PART_INSTALL"
+      mkdir -p "$CRAFT_PART_INSTALL"
+      # Create a venv with --copies so bin/python3.12 is a real interpreter
+      # bundled in the snap, not a symlink to the host's /usr/bin/python3.12
+      # (which may not exist on the host — e.g. Ubuntu 26.04 ships 3.14).
       python3 -m venv --copies "$CRAFT_PART_INSTALL"
       export PATH="$CRAFT_PART_INSTALL/bin:$PATH"
       pip install --upgrade --no-cache-dir pip setuptools wheel
@@ -100,6 +105,26 @@ parts:
       pip install --no-cache-dir --no-build-isolation -r requirements.txt
 
       mv _setup_app.py setup.py
+
+      # Bundle the python3.12 standard library into the venv so the snap is
+      # self-contained.  A classic snap runs against the host filesystem, and
+      # the host's system python may not be 3.12 (e.g. Ubuntu 26.04 ships 3.14),
+      # so we must not rely on /usr/lib/python3.12 existing at runtime.  The
+      # core24 build instance is Ubuntu 24.04, which provides it.
+      PYSTDLIB="$(python3 -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')"
+      cp -a "${PYSTDLIB}/." "$CRAFT_PART_INSTALL/lib/python3.12/"
+      rm -rf "$CRAFT_PART_INSTALL/lib/python3.12/test"  # large, not needed at runtime
+
+      # Repoint the venv's base python ('home') at the bundled runtime path.
+      # A venv resolves its STDLIB from 'home' (not from the venv's own lib),
+      # so without this it would look in the host's /usr/lib/python3.12 — which
+      # may not exist.  With home pointing into the snap, the venv finds both
+      # the bundled stdlib (home -> lib/python3.12) and its site-packages
+      # (venv prefix -> lib/python3.12/site-packages).
+      sed -i \
+        -e "s|^home = .*|home = /snap/${CRAFT_PROJECT_NAME}/current/bin|" \
+        -e "s|^executable = .*|executable = /snap/${CRAFT_PROJECT_NAME}/current/bin/python3.12|" \
+        "$CRAFT_PART_INSTALL/pyvenv.cfg"
 
       # Rewrite the venv shebangs from the ephemeral build path to the snap's
       # runtime path so scripts like uvicorn use the snap's own Python and
@@ -112,14 +137,14 @@ parts:
         esac
       done
 
-      # Patch the Python interpreter for classic confinement so it uses
-      # core24's dynamic linker. libpython3.12 and the stdlib are supplied
-      # by the host at /usr/lib (Ubuntu 24.04 ships Python 3.12).
-      patchelf \
-        --set-interpreter /snap/core24/current/lib64/ld-linux-x86-64.so.2 \
-        --set-rpath /snap/core24/current/lib/x86_64-linux-gnu \
-        "$CRAFT_PART_INSTALL/bin/python3.12"
       chmod 755 "$CRAFT_PART_INSTALL/bin/python3.12"
+      # NOTE: deliberately NOT patchelf-ing the interpreter to core24's linker.
+      # Classic confinement uses the host's dynamic linker (as the openclaw
+      # reference snap does for node).  A 24.04-built binary runs fine against a
+      # newer host glibc (forward-compatible); patching it to core24's linker
+      # instead segfaults on hosts whose core24/glibc combination differs
+      # (observed on Ubuntu 26.04).  The stdlib is bundled above, so the snap
+      # does not depend on the host shipping Python 3.12.
 
       # Bundle the app source so the launch wrapper can copy it to a writable
       # location on first run. data/, logs/ and services/cache/ are created at

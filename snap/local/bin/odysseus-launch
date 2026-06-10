@@ -56,8 +56,13 @@ fi
 # Expose snap-provided Node.js for the optional Browser MCP server (npx).
 export PATH="$SNAP/usr/bin:$SNAP/bin:$PATH"
 
-# Run the server from the writable app directory so all relative imports
-# (app.py, core/, src/, routes/, etc.) resolve without PYTHONPATH tricks.
+# The bundled venv's pyvenv.cfg 'home' is repointed into the snap so Python
+# finds the bundled stdlib; that makes Python treat it as a non-venv install,
+# so the venv's site-packages must be added explicitly here.
+export PYTHONPATH="$SNAP/lib/python3.12/site-packages${PYTHONPATH:+:$PYTHONPATH}"
+
+# Run the server from the writable app directory so the app's own relative
+# imports (app.py, core/, src/, routes/, etc.) resolve.
 cd "$APP_DIR"
 exec "$SNAP/bin/uvicorn" app:app \
   --host "${ODYSSEUS_HOST:-127.0.0.1}" \
