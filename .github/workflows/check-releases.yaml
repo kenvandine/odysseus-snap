@@ -1,0 +1,71 @@
+name: Check for new releases
+
+on:
+  schedule:
+    - cron: '0 6 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check-github:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Get upstream version
+        id: upstream
+        run: |
+          # Clone the upstream repo and get the version from core/constants.py
+          if [ -n "${{ secrets.UPSTREAM_CLONE_TOKEN }}" ]; then
+            git clone --depth 1 --branch dev "https://${{ secrets.UPSTREAM_CLONE_TOKEN }}@github.com/pewdiepie-archdaemon/odysseus.git" /tmp/odysseus
+          else
+            git clone --depth 1 --branch dev https://github.com/pewdiepie-archdaemon/odysseus.git /tmp/odysseus
+          fi
+          VERSION=$(grep -oP '(?<=APP_VERSION = ")[^"]+' /tmp/odysseus/core/constants.py)
+          if [ -z "$VERSION" ]; then
+            echo "Failed to get version from upstream"
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Get current version
+        id: current
+        run: |
+          # Try to get version from last commit or use 0.0.0
+          VERSION="0.0.0"
+          if [ -f snap/snapcraft.yaml ]; then
+            VERSION=$(git log -1 --format=%s 2>/dev/null | grep -oP '(?<=version to )\S+' || echo "0.0.0")
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Compare versions
+        id: compare
+        run: |
+          CURRENT="${{ steps.current.outputs.version }}"
+          LATEST="${{ steps.upstream.outputs.version }}"
+          echo "current=$CURRENT" >> $GITHUB_OUTPUT
+          echo "latest=$LATEST" >> $GITHUB_OUTPUT
+          if [ "$CURRENT" != "$LATEST" ]; then
+            echo "needs_update=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Get latest tag
+        id: latest-tag
+        if: steps.compare.outputs.needs_update == 'true'
+        run: |
+          TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Create release
+        if: steps.compare.outputs.needs_update == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.upstream.outputs.version }}
+          name: Release ${{ steps.upstream.outputs.version }}
+          generate_release_notes: ${{ steps.latest-tag.outputs.tag != '' && true || false }}
+          compare_to: ${{ steps.latest-tag.outputs.tag }}
