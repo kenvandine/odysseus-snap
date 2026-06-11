@@ -169,7 +169,12 @@ parts:
         [ -e "$item" ] && cp -r "$item" "$CRAFT_PART_INSTALL/opt/odysseus/"
       done
 
-      craftctl set version="$(grep -oP '(?<=APP_VERSION = \")[^\"]+' core/constants.py)"
+      # APP_VERSION moved to src/constants.py (core/constants.py is now a
+      # backward-compat shim that re-exports it); read src first, fall back to
+      # core for older revisions.
+      VERSION=$(grep -oP 'APP_VERSION\s*=\s*"\K[^"]+' src/constants.py 2>/dev/null | head -1)
+      [ -n "$VERSION" ] || VERSION=$(grep -oP 'APP_VERSION\s*=\s*"\K[^"]+' core/constants.py 2>/dev/null | head -1)
+      craftctl set version="$VERSION"
     prime:
       - -usr/share/doc
       - -usr/share/man
