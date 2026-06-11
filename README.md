@@ -1,22 +1,28 @@
-# odysseus-snap
+# odysseus snap
 
-Snap packaging for [Odysseus](https://github.com/pewdiepie-archdaemon/odysseus), a self-hosted AI workspace.
+Snap packaging for [Odysseus](https://github.com/pewdiepie-archdaemon/odysseus) — a privacy-focused, self-hosted AI workspace with a browser UI.
 
-## Install
+## Building
 
 ```
-sudo snap install odysseus --classic
+snapcraft
+```
+
+Snapcraft builds Odysseus from source into a self-contained Python virtualenv (bundling the Python 3.12 stdlib so the snap does not depend on the host's Python) and bundles Node.js for the optional Browser MCP server.
+
+## Installing
+
+```
+sudo snap install --classic odysseus_<version>_amd64.snap --dangerous
 ```
 
 ## Usage
 
-Start the server:
+Start the server, then open **http://localhost:7000** in your browser:
 
 ```
 odysseus
 ```
-
-Then open **http://localhost:7000** in your browser.
 
 ### Options
 
@@ -38,25 +44,22 @@ AUTH_ENABLED=true
 
 ### Data
 
-User data (conversations, uploads, settings, search cache) is stored in:
+User data (conversations, uploads, settings, search cache) is stored in `~/snap/odysseus/common/app/` and persists across `snap refresh` — only the Python source is updated on refresh, never your data.
 
-```
-~/snap/odysseus/common/app/
-```
+## Design notes
 
-This directory persists across `snap refresh` — only the Python source code is updated on refresh, never your data.
+**Self-contained Python** — The app runs from a bundled virtualenv that includes the Python 3.12 stdlib, so it works regardless of the host's system Python.
 
-## Build
+**Writable app copy** — On first run / refresh the read-only app source is copied to `$SNAP_USER_COMMON/app` so the app can write next to its own files.
 
-Requires [snapcraft](https://snapcraft.io/snapcraft).
+**Classic confinement** — Odysseus needs broad filesystem access for documents, uploads, and tool execution.
 
-```
-snapcraft
-sudo snap install odysseus_*.snap --classic --dangerous
-```
+## Links
 
-## Reporting issues
+- Upstream project: <https://github.com/pewdiepie-archdaemon/odysseus> (<https://pewdiepie-archdaemon.github.io/odysseus/>)
+- Snap packaging: <https://github.com/kenvandine/odysseus-snap>
+- Report a snap issue: <https://github.com/kenvandine/odysseus-snap/issues> (for bugs in Odysseus itself, use the [upstream tracker](https://github.com/pewdiepie-archdaemon/odysseus/issues))
 
-Please open issues at https://github.com/kenvandine/odysseus-snap/issues.
+## License
 
-For bugs in Odysseus itself, use https://github.com/pewdiepie-archdaemon/odysseus/issues.
+Odysseus is licensed under **AGPL-3.0**. This snap packaging lives in [kenvandine/odysseus-snap](https://github.com/kenvandine/odysseus-snap).

@@ -42,6 +42,8 @@ title: Odysseus
 source-code: https://github.com/kenvandine/odysseus-snap
 issues: https://github.com/kenvandine/odysseus-snap/issues
 contact: https://github.com/kenvandine/odysseus-snap/issues
+website: https://pewdiepie-archdaemon.github.io/odysseus/
+license: AGPL-3.0
 
 grade: stable
 confinement: classic
