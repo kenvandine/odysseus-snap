@@ -38,6 +38,18 @@ description: |
 
   Authentication can be enabled by setting AUTH_ENABLED=true in your .env file.
 
+  SECURITY NOTE
+
+  This tool is capable of executing code, accessing files, and interacting
+  with external services on your behalf. Due to the nature of autonomous
+  AI agents, we recommend installing and running this snap inside an LXD
+  container as best practice. A container provides an extra layer of
+  confinement, limiting the agent's reach to the container environment
+  and reducing exposure to your host system and personal data.
+
+    lxc launch ubuntu:24.04 my-agent
+    lxc exec my-agent -- snap install --classic odysseus
+
 title: Odysseus
 source-code: https://github.com/kenvandine/odysseus-snap
 issues: https://github.com/kenvandine/odysseus-snap/issues
