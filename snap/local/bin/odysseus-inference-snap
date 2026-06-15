@@ -1,0 +1,126 @@
+#!/bin/sh
+# odysseus-inference-snap — configure Odysseus to use a Canonical inference snap.
+#
+# Discovers installed inference snaps, presents a menu to choose one, writes
+# OLLAMA_BASE_URL into $SNAP_USER_COMMON/.env so Odysseus's port scanner picks
+# up that snap's dynamic port on next start, and restarts the service.
+#
+# Run as:  odysseus.inference-snap
+#
+# Requires classic confinement: inference snap CLIs must be reachable via PATH.
+# Each snap's port is obtained via `<snap> get http.port`.
+
+export PATH="$SNAP/bin:$PATH"
+CURL="$SNAP/usr/bin/curl"
+
+CLI="odysseus"
+INFERENCE_SNAPS="${CLAW_INFERENCE_SNAPS:-gemma3 gemma4 deepseek-r1 nemotron-3-nano nemotron-3-nano-omni qwen-vl}"
+
+ENV_FILE="${SNAP_USER_COMMON}/.env"
+SERVICE_NAME="odysseus"
+
+log() { printf '%s: %s\n' "$CLI" "$1"; }
+err() { printf '%s: %s\n' "$CLI" "$1" >&2; }
+
+# Returns "http://HOST:PORT" — used as the OLLAMA_BASE_URL value.
+# Odysseus probes http://HOST:PORT/v1/models for model discovery.
+get_snap_base() {
+  sname="$1"
+  snap list "$sname" >/dev/null 2>&1 || return 1
+  host=$("$sname" get http.host 2>/dev/null)
+  port=$("$sname" get http.port 2>/dev/null)
+  [ -z "$port" ] && return 1
+  host="${host:-127.0.0.1}"
+  printf 'http://%s:%s' "$host" "$port"
+}
+
+probe_models() {
+  "$CURL" -sf --connect-timeout 3 --max-time 5 "${1}/v1/models" 2>/dev/null \
+    | grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' \
+    | sed 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/'
+}
+
+ENTRIES=""
+for sname in $INFERENCE_SNAPS; do
+  base=$(get_snap_base "$sname") || continue
+  models=$(probe_models "$base")
+  [ -z "$models" ] && continue
+  for mid in $models; do
+    ENTRIES="${ENTRIES}${sname}|${base}|${mid}
+"
+  done
+done
+ENTRIES=$(printf '%s' "$ENTRIES" | sed '/^$/d')
+COUNT=$(printf '%s\n' "$ENTRIES" | grep -c .)
+
+if [ "$COUNT" -eq 0 ]; then
+  err "no inference snaps detected"
+  err "install one with: sudo snap install gemma4"
+  err "then run '${CLI}.inference-snap' again"
+  exit 1
+fi
+
+write_env() {
+  base_url="$1"
+  mkdir -p "$SNAP_USER_COMMON"
+  if [ -f "$ENV_FILE" ]; then
+    if grep -q '^OLLAMA_BASE_URL=' "$ENV_FILE"; then
+      sed -i "s|^OLLAMA_BASE_URL=.*|OLLAMA_BASE_URL=${base_url}|" "$ENV_FILE"
+    else
+      printf '\nOLLAMA_BASE_URL=%s\n' "$base_url" >> "$ENV_FILE"
+    fi
+  else
+    printf 'OLLAMA_BASE_URL=%s\n' "$base_url" > "$ENV_FILE"
+  fi
+}
+
+if [ ! -t 0 ] || [ ! -t 1 ]; then
+  ENTRY=$(printf '%s\n' "$ENTRIES" | head -1)
+  _sname=$(printf '%s' "$ENTRY" | cut -d'|' -f1)
+  _base=$(printf '%s' "$ENTRY" | cut -d'|' -f2)
+  _mid=$(printf '%s' "$ENTRY" | cut -d'|' -f3)
+  write_env "$_base"
+  log "configured ${_sname}/${_mid} (non-interactive)"
+  systemctl --user restart "$SERVICE_NAME" >/dev/null 2>&1 || true
+  exit 0
+fi
+
+printf '\n%s detected the following inference snaps:\n\n' "$CLI"
+i=1
+printf '%s\n' "$ENTRIES" | while IFS= read -r entry; do
+  [ -z "$entry" ] && continue
+  _sname=$(printf '%s' "$entry" | cut -d'|' -f1)
+  _base=$(printf '%s' "$entry" | cut -d'|' -f2)
+  _mid=$(printf '%s' "$entry" | cut -d'|' -f3)
+  printf '  %d. %s/%s  (%s)\n' "$i" "$_sname" "$_mid" "$_base"
+  i=$((i + 1))
+done
+printf '\n'
+
+while true; do
+  printf 'Model number [1]: '
+  read -r choice
+  [ -z "$choice" ] && choice=1
+  case "$choice" in
+    ''|*[!0-9]*) continue ;;
+  esac
+  if [ "$choice" -ge 1 ] && [ "$choice" -le "$COUNT" ]; then
+    break
+  fi
+done
+
+ENTRY=$(printf '%s\n' "$ENTRIES" | sed -n "${choice}p")
+SNAME=$(printf '%s' "$ENTRY" | cut -d'|' -f1)
+BASE=$(printf '%s' "$ENTRY" | cut -d'|' -f2)
+MID=$(printf '%s' "$ENTRY" | cut -d'|' -f3)
+
+write_env "$BASE"
+log "primary model -> ${SNAME}/${MID}"
+log "wrote OLLAMA_BASE_URL=${BASE} to ${ENV_FILE}"
+log "Odysseus will discover ${SNAME} models on next start"
+
+if systemctl --user restart "$SERVICE_NAME" >/dev/null 2>&1; then
+  log "restarted the gateway service"
+else
+  log "run 'systemctl --user restart ${SERVICE_NAME}' to apply"
+fi

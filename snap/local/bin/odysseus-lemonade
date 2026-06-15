@@ -1,0 +1,67 @@
+#!/bin/sh
+# odysseus-lemonade — configure Odysseus to use lemonade-server as the LLM.
+#
+# Probes lemonade-server, writes OLLAMA_BASE_URL into $SNAP_USER_COMMON/.env
+# so that Odysseus's port scanner picks up the lemonade port on next start,
+# and restarts the odysseus service so the change takes effect.
+#
+# Run as:  odysseus.lemonade
+#
+# Odysseus discovers models by scanning a set of well-known ports on LLM_HOST.
+# Injecting OLLAMA_BASE_URL=http://HOST:PORT causes Odysseus's
+# _append_env_hosts() to add that address to the scan list, which makes
+# lemonade's port 13305 visible to the discovery loop.
+
+export PATH="$SNAP/bin:$PATH"
+CURL="$SNAP/usr/bin/curl"
+
+CLI="odysseus"
+LEMONADE_HOST="${CLAW_LEMONADE_HOST:-127.0.0.1}"
+LEMONADE_PORT="${CLAW_LEMONADE_PORT:-13305}"
+LEMONADE_API="http://${LEMONADE_HOST}:${LEMONADE_PORT}/api/v1"
+
+ENV_FILE="${SNAP_USER_COMMON}/.env"
+SERVICE_NAME="odysseus"
+
+log() { printf '%s: %s\n' "$CLI" "$1"; }
+err() { printf '%s: %s\n' "$CLI" "$1" >&2; }
+
+probe_models() {
+  "$CURL" -sf --connect-timeout 3 --max-time 5 "${1}/models" 2>/dev/null \
+    | grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' \
+    | sed 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/'
+}
+
+MODELS=$(probe_models "$LEMONADE_API")
+if [ -z "$MODELS" ]; then
+  err "lemonade-server not detected at ${LEMONADE_HOST}:${LEMONADE_PORT}"
+  err "start lemonade-server, then run '${CLI}.lemonade' again"
+  exit 1
+fi
+
+log "lemonade detected at ${LEMONADE_HOST}:${LEMONADE_PORT}"
+
+# Write or update OLLAMA_BASE_URL in the .env file.
+# Odysseus's _append_env_hosts() reads OLLAMA_BASE_URL (and OLLAMA_URL /
+# LM_STUDIO_URL) to append extra hosts to the model scan.  Setting it to
+# lemonade's address injects port 13305 into the discovery loop.
+mkdir -p "$SNAP_USER_COMMON"
+if [ -f "$ENV_FILE" ]; then
+  # Replace an existing OLLAMA_BASE_URL line, or append.
+  if grep -q '^OLLAMA_BASE_URL=' "$ENV_FILE"; then
+    sed -i "s|^OLLAMA_BASE_URL=.*|OLLAMA_BASE_URL=http://${LEMONADE_HOST}:${LEMONADE_PORT}|" "$ENV_FILE"
+  else
+    printf '\nOLLAMA_BASE_URL=http://%s:%s\n' "$LEMONADE_HOST" "$LEMONADE_PORT" >> "$ENV_FILE"
+  fi
+else
+  printf 'OLLAMA_BASE_URL=http://%s:%s\n' "$LEMONADE_HOST" "$LEMONADE_PORT" > "$ENV_FILE"
+fi
+
+log "wrote OLLAMA_BASE_URL=http://${LEMONADE_HOST}:${LEMONADE_PORT} to ${ENV_FILE}"
+log "Odysseus will discover lemonade models on next start"
+
+if systemctl --user restart "$SERVICE_NAME" >/dev/null 2>&1; then
+  log "restarted the gateway service"
+else
+  log "run 'systemctl --user restart ${SERVICE_NAME}' to apply"
+fi

@@ -64,12 +64,30 @@ apps:
   odysseus:
     command: bin/odysseus-launch
 
+  # Interactive Lemonade model picker.  Run as: odysseus.lemonade
+  # Writes OLLAMA_BASE_URL=http://127.0.0.1:13305 to $SNAP_USER_COMMON/.env
+  # so Odysseus's _append_env_hosts() adds lemonade's port to its scan list.
+  lemonade:
+    command: bin/odysseus-lemonade
+    environment:
+      CLAW_INFERENCE_SNAPS: "gemma3 gemma4 deepseek-r1 nemotron-3-nano nemotron-3-nano-omni qwen-vl"
+
+  # Interactive inference snap picker.  Run as: odysseus.inference-snap
+  # Writes OLLAMA_BASE_URL=http://HOST:PORT to $SNAP_USER_COMMON/.env so
+  # Odysseus's _append_env_hosts() adds the inference snap's port to the scan.
+  inference-snap:
+    command: bin/odysseus-inference-snap
+    environment:
+      CLAW_INFERENCE_SNAPS: "gemma3 gemma4 deepseek-r1 nemotron-3-nano nemotron-3-nano-omni qwen-vl"
+
 parts:
   launcher:
     plugin: dump
     source: snap/local
     organize:
       bin/odysseus-launch: bin/odysseus-launch
+      bin/odysseus-lemonade: bin/odysseus-lemonade
+      bin/odysseus-inference-snap: bin/odysseus-inference-snap
 
   odysseus:
     # Use nil plugin to bypass the python plugin's post-build Python-payload
