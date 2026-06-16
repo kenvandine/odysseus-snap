@@ -5,7 +5,11 @@
 # so that Odysseus's port scanner picks up the lemonade port on next start,
 # and restarts the odysseus service so the change takes effect.
 #
-# Run as:  odysseus.lemonade
+# Run as:  odysseus.lemonade [--auto]
+#
+# --auto: non-interactive; configures without user prompts.  Odysseus has no
+#         model-selection TUI (it port-scans for models at runtime), so this
+#         flag has no visible effect beyond silencing the status messages.
 #
 # Odysseus discovers models by scanning a set of well-known ports on LLM_HOST.
 # Injecting OLLAMA_BASE_URL=http://HOST:PORT causes Odysseus's
@@ -26,6 +30,15 @@ SERVICE_NAME="odysseus"
 log() { printf '%s: %s\n' "$CLI" "$1"; }
 err() { printf '%s: %s\n' "$CLI" "$1" >&2; }
 
+# Parse arguments.
+AUTO=0
+for arg in "$@"; do
+  case "$arg" in
+    --auto) AUTO=1 ;;
+    *) err "unknown argument: $arg"; exit 1 ;;
+  esac
+done
+
 probe_models() {
   "$CURL" -sf --connect-timeout 3 --max-time 5 "${1}/models" 2>/dev/null \
     | grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' \
@@ -39,7 +52,7 @@ if [ -z "$MODELS" ]; then
   exit 1
 fi
 
-log "lemonade detected at ${LEMONADE_HOST}:${LEMONADE_PORT}"
+[ "$AUTO" -eq 0 ] && log "lemonade detected at ${LEMONADE_HOST}:${LEMONADE_PORT}"
 
 # Write or update OLLAMA_BASE_URL in the .env file.
 # Odysseus's _append_env_hosts() reads OLLAMA_BASE_URL (and OLLAMA_URL /
@@ -57,11 +70,13 @@ else
   printf 'OLLAMA_BASE_URL=http://%s:%s\n' "$LEMONADE_HOST" "$LEMONADE_PORT" > "$ENV_FILE"
 fi
 
-log "wrote OLLAMA_BASE_URL=http://${LEMONADE_HOST}:${LEMONADE_PORT} to ${ENV_FILE}"
-log "Odysseus will discover lemonade models on next start"
+if [ "$AUTO" -eq 0 ]; then
+  log "wrote OLLAMA_BASE_URL=http://${LEMONADE_HOST}:${LEMONADE_PORT} to ${ENV_FILE}"
+  log "Odysseus will discover lemonade models on next start"
+fi
 
 if systemctl --user restart "$SERVICE_NAME" >/dev/null 2>&1; then
-  log "restarted the gateway service"
+  [ "$AUTO" -eq 0 ] && log "restarted the gateway service"
 else
-  log "run 'systemctl --user restart ${SERVICE_NAME}' to apply"
+  [ "$AUTO" -eq 0 ] && log "run 'systemctl --user restart ${SERVICE_NAME}' to apply"
 fi
