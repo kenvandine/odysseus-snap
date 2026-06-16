@@ -13,6 +13,12 @@ description: |
   Your conversations, documents, uploaded files, and personal settings are stored
   in ~/snap/odysseus/common/app/data and persist across snap updates.
 
+  LOCAL AI
+
+  Run 'odysseus.inference-snap' to detect a Canonical inference snap
+  (gemma4, gemma3, deepseek-r1, and others) and configure it as the
+  Ollama-compatible backend in one step — fully offline, no API key required.
+
   QUICK START
 
   After installation, run:
