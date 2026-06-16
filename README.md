@@ -46,6 +46,19 @@ AUTH_ENABLED=true
 
 User data (conversations, uploads, settings, search cache) is stored in `~/snap/odysseus/common/app/` and persists across `snap refresh` — only the Python source is updated on refresh, never your data.
 
+### Local AI with Canonical inference snaps
+
+`odysseus.inference-snap` detects installed [Canonical inference snaps](https://snapcraft.io/search?q=inference)
+such as `gemma4`, `gemma3`, `deepseek-r1`, `nemotron-3-nano`, or `qwen-vl`, probes
+their OpenAI-compatible API, and lets you choose one as Odysseus's inference backend.
+It writes `OLLAMA_BASE_URL` into `~/snap/odysseus/common/.env` and restarts the
+service so the change takes effect immediately. Re-run it any time to switch models.
+
+```
+sudo snap install gemma4
+odysseus.inference-snap
+```
+
 ## Design notes
 
 **Self-contained Python** — The app runs from a bundled virtualenv that includes the Python 3.12 stdlib, so it works regardless of the host's system Python.
